@@ -26,6 +26,8 @@ use ::sys::socket::addr::sys_control::SysControlAddr;
 pub use self::datalink::LinkAddr;
 #[cfg(target_os = "linux")]
 pub use self::vsock::VsockAddr;
+#[cfg(target_os = "linux")]
+pub use self::pppox::PPPoXAddr;
 
 /// These constants specify the protocol family to be used
 /// in [`socket`](fn.socket.html) and [`socketpair`](fn.socketpair.html)
@@ -650,6 +652,8 @@ pub enum SockAddr {
     Link(LinkAddr),
     #[cfg(target_os = "linux")]
     Vsock(VsockAddr),
+    #[cfg(target_os = "linux")]
+    PPPoX(PPPoXAddr),
 }
 
 impl SockAddr {
@@ -681,6 +685,11 @@ impl SockAddr {
         SockAddr::Vsock(VsockAddr::new(cid, port))
     }
 
+    #[cfg(target_os = "linux")]
+    pub fn new_pppox(protocol: libc::c_uint, addr: libc::sockaddr_pppox_sa_addr_t) -> SockAddr {
+        SockAddr::PPPoX(PPPoXAddr::new(protocol, addr))
+    }
+
     pub fn family(&self) -> AddressFamily {
         match *self {
             SockAddr::Inet(InetAddr::V4(..)) => AddressFamily::Inet,
@@ -703,6 +712,8 @@ impl SockAddr {
             SockAddr::Link(..) => AddressFamily::Link,
             #[cfg(target_os = "linux")]
             SockAddr::Vsock(..) => AddressFamily::Vsock,
+            #[cfg(target_os = "linux")]
+            SockAddr::PPPoX(..) => AddressFamily::Pppox,
         }
     }
 
@@ -814,6 +825,11 @@ impl SockAddr {
                 &*(sa as *const libc::sockaddr_vm as *const libc::sockaddr),
                 mem::size_of_val(sa) as libc::socklen_t
             ),
+            #[cfg(target_os = "linux")]
+            SockAddr::PPPoX(PPPoXAddr(ref sa)) => (
+                &*(sa as *const libc::sockaddr_pppox as *const libc::sockaddr),
+                mem::size_of_val(sa) as libc::socklen_t
+            ),
         }
     }
 }
@@ -840,6 +856,8 @@ impl fmt::Display for SockAddr {
             SockAddr::Link(ref ether_addr) => ether_addr.fmt(f),
             #[cfg(target_os = "linux")]
             SockAddr::Vsock(ref svm) => svm.fmt(f),
+            #[cfg(target_os = "linux")]
+            SockAddr::PPPoX(ref pppox) => pppox.fmt(f),
         }
     }
 }
@@ -1232,6 +1250,67 @@ pub mod vsock {
     }
 
     impl fmt::Debug for VsockAddr {
+        fn fmt(&self, f: &mut fmt::Formatter) -> fmt::Result {
+            fmt::Display::fmt(self, f)
+        }
+    }
+}
+
+
+#[cfg(target_os = "linux")]
+pub mod pppox {
+    use ::sys::socket::addr::AddressFamily;
+    use libc::{sa_family_t, sockaddr_pppox};
+    use std::{fmt, mem};
+    use std::hash::{Hash, Hasher};
+
+    #[derive(Copy, Clone)]
+    pub struct PPPoXAddr(pub sockaddr_pppox);
+
+    impl PartialEq for PPPoXAddr {
+        fn eq(&self, other: &Self) -> bool {
+            let (inner, other) = (self.0, other.0);
+            (inner.sa_family, inner.sa_protocol, inner.sa_addr) ==
+            (other.sa_family, other.sa_protocol, other.sa_addr)
+        }
+    }
+
+    impl Eq for PPPoXAddr {}
+
+    impl Hash for PPPoXAddr {
+        fn hash<H: Hasher>(&self, s: &mut H) {
+            self.0.hash(s);
+        }
+    }
+    
+    impl PPPoXAddr {
+        pub fn new(protocol: libc::c_uint, addr: libc::sockaddr_pppox_sa_addr_t) -> PPPoXAddr {
+            let mut sockaddr_pppox: sockaddr_pppox = unsafe { mem::zeroed() };
+            sockaddr_pppox.sa_family = AddressFamily::Pppox as sa_family_t;
+            sockaddr_pppox.sa_protocol = protocol;
+            sockaddr_pppox.sa_addr = addr;
+
+            PPPoXAddr(sockaddr_pppox)
+        }
+
+        /// Protocol Id.
+        pub fn protocol(&self) -> libc::c_uint {
+            self.0.sa_protocol
+        }
+
+        /// sa_addr union's value.
+        pub fn addr(&self) -> libc::sockaddr_pppox_sa_addr_t {
+            self.0.sa_addr
+        }
+    }
+
+    impl fmt::Display for PPPoXAddr {
+        fn fmt(&self, f: &mut fmt::Formatter) -> fmt::Result {
+            write!(f, "protocol: {} addr: {:?}", self.protocol(), self.addr())
+        }
+    }
+
+    impl fmt::Debug for PPPoXAddr {
         fn fmt(&self, f: &mut fmt::Formatter) -> fmt::Result {
             fmt::Display::fmt(self, f)
         }
